@@ -1,24 +1,18 @@
 #include "modem_handler.h"
 
 #include <Arduino.h>
-#include <ArduinoHttpClient.h>
-#include <TinyGsmClient.h>
 
 #include "camera_handler.h"
 #include "terminal_handler.h"
 
-const char* upload_url = "/api/captured/image";
+const char* X_DEVICE_ID = "2137420";
 
-static const char* upload_server = "trop-mock.p4tkry.pl";
-static const char* modem_apn = "internet";
-static const char* modem_user = "internet";
-static const char* modem_passwd = "internet";
+const char* server_url = "https://trop-mock.p4tkry.pl";
+const char* upload_url = "/api/captured/image";
 
 volatile modem_flags_t modemFlags;
 
-TinyGsm gsmModem(Serial1);
-TinyGsmClientSecure gsmClient(gsmModem);
-HttpClient htClient(gsmClient, upload_server, 443);
+Botletics_modem_LTE gsmModem = Botletics_modem_LTE();
 
 #define MODEM_RESTART(msg)                   \
   {                                          \
@@ -39,63 +33,59 @@ vModemHandler_start:
   modemFlags.modem_connected = 0;
   modemFlags.sending_in_progress = 0;
   modemFlags.c_retries = 0;
-  htClient.stop();
-  pinMode(MODEM_PWR_PIN, OUTPUT);
-  digitalWrite(MODEM_PWR_PIN, LOW);
   Serial1.begin(921600, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
 
-  delay(500);
-  digitalWrite(MODEM_PWR_PIN, HIGH);
-  delay(4000);
-
-  if (!gsmModem.init()) {
+  gsmModem.powerOn(MODEM_PWR_PIN);
+  if (!gsmModem.begin(Serial1)) {
     MODEM_RESTART("Init failed");
   }
+
+  gsmModem.setFunctionality(1);
+  gsmModem.setNetworkSettings(F("internet"), F("internet"), F("internet"));
+  gsmModem.setHTTPSRedirect(true);
+  gsmModem.enableRTC(true);
+
+  uint16_t cnt = 0;
+  while (!gsmModem.getNetworkStatus()) {
+    delay(MODEM_TASK_DLY);
+    ++cnt;
+    if (cnt >= 150) {
+      MODEM_RESTART("Network registration failed");
+    }
+  };
+
+  Serial.println("Modem initialised");
   modemFlags.modem_initialised = 1;
-  if (!gsmModem.waitForNetwork(15000L)) {
-    MODEM_RESTART("Failed to connect to operator network");
-  }
-  if (!gsmModem.gprsConnect(modem_apn, modem_user, modem_passwd)) {
-    MODEM_RESTART("Failed to connect to internet");
+
+  if (!gsmModem.openWirelessConnection(true)) {
+    MODEM_RESTART("Internet connection failed");
   }
   modemFlags.modem_connected = 1;
   Serial.println("Modem connected");
 
-  uint16_t cnt = 0;
+  cnt = 0;
   while (true) {
     if (modemFlags.sending_in_progress) {
       // Upload the resulting file
       Serial.printf("Sending %d bytes of stuff\n", fb->len);
+      bool res_code = false, res = false;
 
-      htClient.connectionKeepAlive();
-      htClient.setTimeout(60000);
-      htClient.setHttpResponseTimeout(45000);
-      htClient.setHttpWaitForDataDelay(5);
-      htClient.beginRequest();
+      gsmModem.HTTP_addHeader("Connection", "keep-alive", 10);
+      gsmModem.HTTP_addHeader("Cache-control", "no-cache", 8);
+      gsmModem.HTTP_addHeader("Content-Type", "image/jpeg", 10);
+      gsmModem.HTTP_addHeader("X-Device-Id", X_DEVICE_ID, strlen(X_DEVICE_ID));
+      res = gsmModem.HTTP_connect(server_url);
 
-      int res_code;
-      int res = htClient.post(upload_url);
-      Serial.printf("Initial code: %d\n", res);
-
-      if (res == 0) {
-        htClient.sendHeader(HTTP_HEADER_CONTENT_TYPE, "image/jpeg");
-        htClient.sendHeader(HTTP_HEADER_CONTENT_LENGTH, 10000);
-        htClient.sendHeader("X-Device-Id", X_DEVICE_ID);
-        htClient.endRequest();
-        htClient.write(fb->buf, 10000);
-
-        res_code = htClient.responseStatusCode();
-        htClient.skipResponseHeaders();
+      Serial.printf("Server connection status: %d\n", res);
+      if (res) {
+        res_code = gsmModem.HTTP_POST(upload_url, (char*)fb->buf, 100);
       }
-      htClient.stop();
-
-      Serial.printf("Image sent to: %s\nReturn code: %i\n", upload_url,
-                    res_code);
-
-      if (res_code != 200 && modemFlags.c_retries < MODEM_MAX_RETRIES) {
+      if (!res_code && modemFlags.c_retries < MODEM_MAX_RETRIES) {
+        Serial.println("HTTP upload failed");
         ++modemFlags.c_retries;
-      }
-      if (res_code == 200) {
+      } else if (res_code) {
+        Serial.printf("Image sent to: %s\nReturn code: %i\n", upload_url,
+                      res_code);
         modemFlags.c_retries = 0;
       }
 
@@ -104,23 +94,18 @@ vModemHandler_start:
       if (modemFlags.c_retries >= MODEM_MAX_RETRIES) {
         MODEM_RESTART("Max retries reached");
       }
-      if (cnt % 29 == 0) {
-        if (!gsmModem.testAT()) {
-          MODEM_RESTART("Went away");
-        }
-      }
       if (cnt % 79 == 0) {
-        if (!gsmModem.isNetworkConnected()) {
+        if (!gsmModem.getNetworkStatus()) {
           MODEM_RESTART("Disconnected from operator network");
         }
       }
       if (cnt % 179 == 0) {
-        if (!gsmModem.isGprsConnected()) {
+        if (!gsmModem.wirelessConnStatus()) {
           MODEM_RESTART("Disconnected from internet");
         }
       }
       ++cnt;
     }
-    delay(20);
+    delay(MODEM_TASK_DLY);
   }
 }

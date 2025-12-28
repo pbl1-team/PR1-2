@@ -1,17 +1,15 @@
 #pragma once
-#define TINY_GSM_MODEM_SIM7000SSL
-#define TINY_GSM_RX_BUFFER 4096
-#define TINY_GSM_YIELD_MS 1
+#define SIMCOM_7000
 
-#include <ArduinoHttpClient.h>
-#include <TinyGsmClient.h>
+#include <BotleticsSIM7000.h>
 #include <stdint.h>
 
 #define MODEM_PWR_PIN 41
 #define MODEM_RX_PIN D7
 #define MODEM_TX_PIN D6
+#define MODEM_TASK_DLY 20
 
-const int X_DEVICE_ID = 2137420;
+extern const char* X_DEVICE_ID;
 const uint8_t MODEM_MAX_RETRIES = 3;
 
 typedef struct modem_flags {
@@ -22,11 +20,7 @@ typedef struct modem_flags {
 } modem_flags_t;
 extern volatile modem_flags_t modemFlags;
 
-extern TinyGsm gsmModem;
-extern TinyGsmClientSecure gsmClient;
-extern HttpClient htClient;
-
-extern const char* upload_url;
+extern Botletics_modem_LTE gsmModem;
 
 #define MODEM_STACK_SIZE 4096
 
