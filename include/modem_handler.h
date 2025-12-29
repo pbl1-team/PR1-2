@@ -3,11 +3,12 @@
 #define TINY_GSM_RX_BUFFER 4096
 #define TINY_GSM_YIELD_MS 1
 
+#include <Arduino.h>
 #include <ArduinoHttpClient.h>
 #include <TinyGsmClient.h>
 #include <stdint.h>
 
-#define MODEM_PWR_PIN 41
+#define MODEM_PWR_PIN D1
 #define MODEM_RX_PIN D7
 #define MODEM_TX_PIN D6
 

@@ -68,8 +68,8 @@ vModemHandler_start:
       Serial.printf("Sending %d bytes of stuff\n", fb->len);
 
       htClient.connectionKeepAlive();
-      htClient.setTimeout(60000);
-      htClient.setHttpResponseTimeout(45000);
+      htClient.setTimeout(120000);
+      htClient.setHttpResponseTimeout(110000);
       htClient.setHttpWaitForDataDelay(5);
       htClient.beginRequest();
 
@@ -79,10 +79,10 @@ vModemHandler_start:
 
       if (res == 0) {
         htClient.sendHeader(HTTP_HEADER_CONTENT_TYPE, "image/jpeg");
-        htClient.sendHeader(HTTP_HEADER_CONTENT_LENGTH, 10000);
+        htClient.sendHeader(HTTP_HEADER_CONTENT_LENGTH, fb->len);
         htClient.sendHeader("X-Device-Id", X_DEVICE_ID);
         htClient.endRequest();
-        htClient.write(fb->buf, 10000);
+        htClient.write(fb->buf, fb->len);
 
         res_code = htClient.responseStatusCode();
         htClient.skipResponseHeaders();

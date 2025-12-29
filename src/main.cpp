@@ -11,28 +11,62 @@
 static unsigned long it_st_time, it_time;
 
 typedef struct userFlags {
-  uint8_t sensor_prev : 1;
   uint8_t take_pic : 1;
+  uint8_t sensor_pressed : 1;
 } user_flags_t;
 static volatile user_flags_t userFlags;
+
+#define ASENSOR_PIN A0
+#define ASENSOR_SCAN_DLY 20
+#define ASENSOR_WINDOW_SIZE (20 * 1000 / ASENSOR_SCAN_DLY)
+#define ASENSOR_WINDOW2_SIZE (3 * 1000 / ASENSOR_SCAN_DLY)
+const uint16_t asensor_base_val = 75;
+const uint8_t asensor_multiplier = 16;
+static uint64_t asensor_avg, asensor2_avg;
 
 static StaticTimer_t xTimer1Buf;
 static TimerHandle_t xTimer1;
 static void vTimer1Callback(TimerHandle_t xExpiredTimer) {
-  // FIXME: remove dummy code
-  userFlags.take_pic = 1;
+  uint64_t adcval = analogRead(ASENSOR_PIN);
+
+  // Update long average window
+  asensor_avg -= asensor_avg / ASENSOR_WINDOW_SIZE;
+  asensor_avg +=
+      ((adcval + asensor_base_val) << asensor_multiplier) / ASENSOR_WINDOW_SIZE;
+  // Update short average window
+  asensor2_avg -= asensor2_avg / ASENSOR_WINDOW2_SIZE;
+  asensor2_avg += (adcval << asensor_multiplier) / ASENSOR_WINDOW2_SIZE;
+
+  if (!userFlags.take_pic) {
+    // Detect press
+    if (!userFlags.sensor_pressed && asensor2_avg * 100 > asensor_avg * 107) {
+      userFlags.take_pic = 1;
+      userFlags.sensor_pressed = 1;
+    }
+    // Detect depress
+    if (userFlags.sensor_pressed && asensor2_avg * 100 < asensor_avg * 104) {
+      userFlags.sensor_pressed = 0;
+      // To avoid sudden re-trigger
+      asensor2_avg = asensor2_avg * 7 / 10;
+      asensor_avg = asensor_avg * 9 / 10;
+    }
+  }
 }
 
 void setup() {
   // Initialise terminal
   Serial.begin(CONFIG_MONITOR_BAUD);
   termFlags.term_stalled = 1;
+  pinMode(LED_BUILTIN, OUTPUT);
 
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+  asensor_avg = (asensor_base_val << asensor_multiplier);
   // ? Timer -> the sensor reading and JUST reading code should go into this
   // ? timer
-  pinMode(LED_BUILTIN, OUTPUT);
-  xTimer1 = xTimerCreateStatic("T1", 2000 / portTICK_PERIOD_MS, pdTRUE,
-                               (void*)0x00, vTimer1Callback, &xTimer1Buf);
+  xTimer1 =
+      xTimerCreateStatic("T1", ASENSOR_SCAN_DLY / portTICK_PERIOD_MS, pdTRUE,
+                         (void*)0x00, vTimer1Callback, &xTimer1Buf);
   xTimerStart(xTimer1, 0);
 
   /*
@@ -75,6 +109,10 @@ void loop() {
   // Get loop start time
   it_st_time = millis();
 
+  Serial.println("\n");
+  Serial.println(asensor_avg);
+  Serial.println(asensor2_avg);
+
   if (userFlags.take_pic) {
     // Read camera frame
     digitalWrite(LED_BUILTIN, LOW);
@@ -88,7 +126,7 @@ void loop() {
     // Check if frame exists and upload it if so
     if (fb) {
       if (modemFlags.modem_initialised && modemFlags.modem_connected) {
-        modemFlags.sending_in_progress = 1;
+        // modemFlags.sending_in_progress = 1;
 
         while (modemFlags.sending_in_progress) {
           delay(FPS_DLY);
