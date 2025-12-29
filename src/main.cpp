@@ -1,18 +1,20 @@
 #include <Arduino.h>
-#include <HTTPClient.h>
 #include <esp_camera.h>
 
 #include "camera_handler.h"
+#include "ir_sensor_handler.h"
 #include "modem_handler.h"
 #include "terminal_handler.h"
 
-#define FPS 10
+#define FPS 5
 #define FPS_DLY 1000 / FPS
 static unsigned long it_st_time, it_time;
 
 typedef struct userFlags {
   uint8_t take_pic : 1;
   uint8_t sensor_pressed : 1;
+  uint8_t ir_presense_detected : 1;
+  uint8_t ir_motion_detected : 1;
 } user_flags_t;
 static volatile user_flags_t userFlags;
 
@@ -29,24 +31,37 @@ static TimerHandle_t xTimer1;
 static void vTimer1Callback(TimerHandle_t xExpiredTimer) {
   uint64_t adcval = analogRead(ASENSOR_PIN);
 
-  // Update long average window
-  asensor_avg -= asensor_avg / ASENSOR_WINDOW_SIZE;
-  asensor_avg +=
-      ((adcval + asensor_base_val) << asensor_multiplier) / ASENSOR_WINDOW_SIZE;
+  // Read IR sensor data
+  if (irDataReady.drdy) {
+    irDataReady.drdy = 0;
+    userFlags.ir_motion_detected = irStatus.mot_flag;
+    userFlags.ir_presense_detected = irStatus.pres_flag;
+  }
+
+  if (!userFlags.ir_presense_detected) {
+    // Update long average window
+    asensor_avg -= asensor_avg / ASENSOR_WINDOW_SIZE;
+    asensor_avg += ((adcval + asensor_base_val) << asensor_multiplier) /
+                   ASENSOR_WINDOW_SIZE;
+  }
   // Update short average window
   asensor2_avg -= asensor2_avg / ASENSOR_WINDOW2_SIZE;
   asensor2_avg += (adcval << asensor_multiplier) / ASENSOR_WINDOW2_SIZE;
 
   if (!userFlags.take_pic) {
     // Detect press
-    if (!userFlags.sensor_pressed && asensor2_avg * 100 > asensor_avg * 107) {
+    if (!userFlags.sensor_pressed &&
+        (asensor2_avg + userFlags.ir_motion_detected * asensor_base_val) * 100 >
+            asensor_avg * 107) {
       userFlags.take_pic = 1;
       userFlags.sensor_pressed = 1;
     }
     // Detect depress
-    if (userFlags.sensor_pressed && asensor2_avg * 100 < asensor_avg * 104) {
+    if (userFlags.sensor_pressed &&
+        (asensor2_avg - userFlags.ir_motion_detected * asensor_base_val) * 100 <
+            asensor_avg * 104) {
       userFlags.sensor_pressed = 0;
-      // To avoid sudden re-trigger
+      // To avoid sudden re-trigger and accelerate threshold level readjust
       asensor2_avg = asensor2_avg * 7 / 10;
       asensor_avg = asensor_avg * 9 / 10;
     }
@@ -90,9 +105,21 @@ void setup() {
       //
       vModemHandler, "MODEM", MODEM_STACK_SIZE, (void*)0x00,
       //
-      (tskIDLE_PRIORITY + 5),
+      (tskIDLE_PRIORITY + 10),
       //
       xModemHandlerStack, &xModemHandlerBuf,
+      // CPU1
+      1
+      //
+  );
+
+  xIRHandler = xTaskCreateStaticPinnedToCore(
+      //
+      vIRHandler, "IRSNS", IR_STACK_SIZE, (void*)0x00,
+      //
+      (tskIDLE_PRIORITY + 5),
+      //
+      xIRHandlerStack, &xIRHandlerBuf,
       // CPU1
       1
       //
@@ -109,9 +136,9 @@ void loop() {
   // Get loop start time
   it_st_time = millis();
 
-  Serial.println("\n");
-  Serial.println(asensor_avg);
-  Serial.println(asensor2_avg);
+  Serial.printf("Thresh: %lld\nVal: %lld\n", asensor_avg, asensor2_avg);
+  Serial.printf("Mot: %hd\nPres: %hd\n\n", userFlags.ir_motion_detected,
+                userFlags.ir_presense_detected);
 
   if (userFlags.take_pic) {
     // Read camera frame
