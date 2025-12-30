@@ -41,7 +41,7 @@ void vModemHandler(void* params);
 #define MODEM_CONN_TMOUT 15000
 
 // Buffer sizes
-#define RESPONSE_BUFFER_SIZE 2048  // Store up to 2KB response
+#define RESPONSE_BUFFER_SIZE 512
 
 // SSL Session ID (0-5 available on SIM7000)
 #define SSL_SESSION_ID 0

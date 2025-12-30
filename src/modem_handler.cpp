@@ -6,7 +6,7 @@
 #include "terminal_handler.h"
 
 const char* upload_url = "/api/captured/image";
-static const char* upload_server = "mkcieslak.synology.me";
+static const char* upload_server = "trop-mock.p4tkry.pl";
 const char* X_DEVICE_ID = "X-Device-Id: 2137420";
 static char headers[2048];
 
@@ -69,7 +69,7 @@ vModemHandler_start:
       Serial.println("[MODEM] SSL configured");
 
       res = modemHttpPostJpeg(upload_server,  // Host
-                              2137,           // Port
+                              443,            // Port
                               upload_url,     // Path
                               fb->buf,        // JPEG data
                               fb->len,        // Length
@@ -78,6 +78,7 @@ vModemHandler_start:
 
       if (res == MODEM_OK || res == MODEM_CLOSED) {
         Serial.println("[MODEM] Upload complete!");
+        res_code = 200;
       } else {
         Serial.printf("[MODEM] Upload failed:  %d\n", res);
       }
@@ -212,15 +213,15 @@ ModemResult modemSendAT(const char* cmd, const char* expectedResp,
 
       // Check for error responses
       if (strstr(modem.responseBuffer, "ERROR") ||
-          strstr(modem.responseBuffer, "+CASTATE:  0") ||
-          strstr(modem.responseBuffer, "+CADATAIND: 0,0")) {
+          strstr(modem.responseBuffer, "+CASTATE: 0") ||
+          strstr(modem.responseBuffer, "+CADATAIND: 0")) {
         foundError = true;
       }
     }
 
     // If we found expected response, wait a bit for trailing data
     if (foundExpected) {
-      delay(50);
+      delay(30);
       while (MODEM_SERIAL.available() &&
              modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
         modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();
@@ -233,7 +234,7 @@ ModemResult modemSendAT(const char* cmd, const char* expectedResp,
       return MODEM_ERROR;
     }
 
-    delay(10);  // Yield to other tasks
+    delay(1);  // Yield to other tasks
   }
 
   return foundExpected ? MODEM_OK : MODEM_TIMEOUT;
@@ -367,14 +368,6 @@ ModemResult modemConfigureSSL() {
 
   modemSendATF("OK", AT_TIMEOUT_MEDIUM, "AT+CACLOSE=%d", SSL_SESSION_ID);
 
-  res = modemSendAT("AT+CACFG=\"transwaittm\",1", "OK", AT_TIMEOUT_SHORT);
-  if (res != MODEM_OK) return res;
-  delay(50);
-
-  res = modemSendAT("AT+CACFG=\"transpktsize\",1024", "OK", AT_TIMEOUT_SHORT);
-  if (res != MODEM_OK) return res;
-  delay(50);
-
   res = modemSendATF("OK", AT_TIMEOUT_SHORT, "AT+CACID=%d", SSL_SESSION_ID);
   if (res != MODEM_OK) return res;
   delay(50);
@@ -441,7 +434,7 @@ ModemResult modemSSLOpen(const char* host, uint16_t port) {
 
 ModemResult modemSSLSendData(const uint8_t* data, size_t len) {
   ModemResult res;
-  const size_t MAX_CHUNK = 250;  // safe chunk size
+  const size_t MAX_CHUNK = 512;  // safe chunk size
   size_t sent = 0;
 
   while (sent < len) {
@@ -456,14 +449,7 @@ ModemResult modemSSLSendData(const uint8_t* data, size_t len) {
     }
 
     // Now send exactly chunkSize bytes - modem is counting
-    size_t written = 0;
-    while (written < chunkSize) {
-      size_t toWrite = min((size_t)256, chunkSize - written);
-      MODEM_SERIAL.write(data + sent + written, toWrite);
-      written += toWrite;
-      // Small yield OK here - modem is buffering until it gets chunkSize bytes
-      delay(1);
-    }
+    MODEM_SERIAL.write(data + sent, chunkSize);
     MODEM_SERIAL.flush();
 
     // Wait for OK confirming data was sent
@@ -487,7 +473,7 @@ ModemResult modemSSLSendData(const uint8_t* data, size_t len) {
         Serial.printf("[MODEM] CASEND error: %s\n", modem.responseBuffer);
         return MODEM_ERROR;
       }
-      delay(10);
+      delay(1);
     }
 
     if (!gotOK) {
@@ -502,63 +488,89 @@ ModemResult modemSSLSendData(const uint8_t* data, size_t len) {
   return MODEM_OK;
 }
 
-// Receive data using AT+CARECV
 ModemResult modemSSLReceiveData(uint32_t timeout) {
   modem.responseLen = 0;
   memset(modem.responseBuffer, 0, RESPONSE_BUFFER_SIZE);
 
+  char atBuffer[64];
+  size_t atLen = 0;
+
   uint32_t start = millis();
 
+  Serial.println("[MODEM] Waiting for +CADATAIND...");
+
+  // Wait for +CADATAIND: 0
   while (millis() - start < timeout) {
-    // Check if data is available
-    // +CADATAIND: <cid>,<length> is URC indicating data available
-
-    // Try to receive up to buffer size
-    ModemResult res = modemSendATF(
-        "+CARECV:", AT_TIMEOUT_MEDIUM, "AT+CARECV=%d,%d", SSL_SESSION_ID,
-        RESPONSE_BUFFER_SIZE - modem.responseLen - 1);
-
-    if (res == MODEM_OK) {
-      // Parse +CARECV: <cid>,<len>,<data>
-      char* p = strstr(modem.responseBuffer, "+CARECV:");
-      if (p) {
-        int cid, len;
-        if (sscanf(p, "+CARECV:  %d,%d,", &cid, &len) == 2) {
-          // Find start of data (after second comma)
-          char* dataStart = strchr(p + 8, ',');
-          if (dataStart) {
-            dataStart = strchr(dataStart + 1, ',');
-            if (dataStart) {
-              dataStart++;  // Skip comma
-              // Copy data to response buffer
-              size_t toCopy = min((size_t)len,
-                                  RESPONSE_BUFFER_SIZE - modem.responseLen - 1);
-              memcpy(modem.responseBuffer + modem.responseLen, dataStart,
-                     toCopy);
-              modem.responseLen += toCopy;
-            }
-          }
-
-          if (len > 0) {
-            start = millis();  // Reset timeout on data received
-            continue;
-          }
-        }
-      }
+    while (MODEM_SERIAL.available() && atLen < sizeof(atBuffer) - 1) {
+      atBuffer[atLen++] = MODEM_SERIAL.read();
+      atBuffer[atLen] = '\0';
     }
-
-    // Check if connection closed
-    res = modemSendATF("+CASTATE:", AT_TIMEOUT_SHORT, "AT+CASTATE?");
-    if (strstr(modem.responseBuffer, "+CASTATE: 0") ||
-        strstr(modem.responseBuffer, "+CASTATE: 3")) {
-      // 0 = closed, 3 = closing
+    if (strstr(atBuffer, "+CADATAIND:")) {
       break;
     }
 
-    delay(100);  // Poll interval
+    delay(10);
   }
 
-  return modem.responseLen > 0 ? MODEM_OK : MODEM_TIMEOUT;
+  if (!strstr(atBuffer, "+CADATAIND:")) {
+    Serial.println("[MODEM] Timeout waiting for data");
+    return MODEM_TIMEOUT;
+  }
+
+  Serial.println("[MODEM] Data available, fetching...");
+
+  // Fetch all available data in one call
+  char cmd[64];
+  snprintf(cmd, sizeof(cmd), "AT+CARECV=%d,%d", SSL_SESSION_ID,
+           RESPONSE_BUFFER_SIZE - 1);
+
+  atLen = 0;
+  memset(atBuffer, 0, sizeof(atBuffer));
+
+  MODEM_SERIAL.print(cmd);
+  MODEM_SERIAL.print("\r\n");
+  MODEM_SERIAL.flush();
+
+  start = millis();
+  bool got_data = false;
+
+  // Wait for +CARECV:
+  while (millis() - start < AT_TIMEOUT_SHORT) {
+    while (MODEM_SERIAL.available() && atLen < sizeof(atBuffer) - 1) {
+      atBuffer[atLen++] = MODEM_SERIAL.read();
+      atBuffer[atLen] = '\0';
+      if (strstr(atBuffer, "+CARECV:")) {
+        got_data = true;
+        break;
+      }
+    }
+    if (got_data && strstr(atBuffer, ",")) {
+      break;
+    }
+
+    delay(1);
+  }
+
+  if (got_data) {
+    Serial.println("[MODEM] Loading response body...");
+
+    start = millis();
+    while (millis() - start < AT_TIMEOUT_SHORT) {
+      while (MODEM_SERIAL.available() &&
+             modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
+        modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();
+        modem.responseBuffer[modem.responseLen] = '\0';
+      }
+
+      if (strstr(modem.responseBuffer, "\r\nOK\r\n")) {
+        break;
+      }
+      delay(1);
+    }
+  }
+
+  Serial.printf("[MODEM] Received %d bytes\n", modem.responseLen);
+  return modem.responseLen > 0 ? MODEM_OK : MODEM_ERROR;
 }
 
 ModemResult modemSSLClose() {
@@ -640,16 +652,17 @@ ModemResult modemHttpPostJpeg(const char* host, uint16_t port, const char* path,
   // close) Wait for response
   res = modemSSLReceiveData(MODEM_CONN_TMOUT);
 
-  delay(100);
-
   Serial.println("--- Response ---");
   Serial.println(modem.responseBuffer);
   Serial.println("--- End Response ---");
 
+  bool flag = strstr(modem.responseBuffer, " 200 OK");
+  delay(50);
+
   // Close connection (might already be closed)
   modemSSLClose();
 
-  return modem.responseLen > 0 ? MODEM_OK : res;
+  return flag ? MODEM_OK : MODEM_ERROR;
 }
 
 // ============================================================================
