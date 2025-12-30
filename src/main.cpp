@@ -161,7 +161,7 @@ void loop() {
     // Check if frame exists and upload it if so
     if (fb) {
       if (modemFlags.modem_initialised && modemFlags.modem_connected) {
-        // modemFlags.sending_in_progress = 1;
+        modemFlags.sending_in_progress = 1;
 
         while (modemFlags.sending_in_progress) {
           delay(FPS_DLY);

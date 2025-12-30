@@ -55,7 +55,7 @@ void vTerminalHandler(void* params) {
           termFlags.pump_reset_req = 1;
           continue;
         }
-        Serial.printf("Invalid cmd: %s\n", term_sbuf);
+        Serial.printf("[TERM] Invalid cmd: %s\n", term_sbuf);
       }
     }
 
@@ -81,7 +81,7 @@ PumpHandler_begin:
   Serial2.printf("RESET\r\n");
   PUMP_READLINE();
   termFlags.term_stalled = 1;
-  Serial.printf("Pump controller hello msg: \n%s\n", pump_sbuf);
+  Serial.printf("[PUMP] Pump controller hello msg: \n%s\n", pump_sbuf);
   termFlags.term_stalled = 0;
   while (true) {
     delay(PUMP_SCAN_DLY);
@@ -96,12 +96,12 @@ PumpHandler_begin:
         continue;
       }
       if (pump_sbuf_len != 6 || strncmp("PUMP", pump_sbuf, 4)) {
-        goto PumpHandler_begin;
+        termFlags.pump_failed = 1;
       }
       if (!termFlags.pump_failed && pump_sbuf[5] == 'E') {
         termFlags.pump_failed = 1;
         termFlags.term_stalled = 1;
-        Serial.println("Pump fault detected\n");
+        Serial.println("[PUMP] Pump fault detected\n");
         termFlags.term_stalled = 0;
       }
     }
