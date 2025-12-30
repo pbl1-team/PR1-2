@@ -6,8 +6,9 @@
 #include "terminal_handler.h"
 
 const char* upload_url = "/api/captured/image";
-static const char* upload_server = "trop-mock.p4tkry.pl";
+static const char* upload_server = "mkcieslak.synology.me";
 const char* X_DEVICE_ID = "X-Device-Id: 2137420";
+static char headers[2048];
 
 volatile modem_flags_t modemFlags;
 
@@ -27,7 +28,7 @@ void vModemHandler(void* params) {
   pinMode(MODEM_PWR_PIN, OUTPUT);
   digitalWrite(MODEM_PWR_PIN, LOW);
   MODEM_SERIAL.setRxBufferSize(1024);  // Increase RX buffer
-  delay(100);
+  delay(2500);
 vModemHandler_start:
   modemFlags.modem_initialised = 0;
   modemFlags.modem_connected = 0;
@@ -68,7 +69,7 @@ vModemHandler_start:
       Serial.println("[MODEM] SSL configured");
 
       res = modemHttpPostJpeg(upload_server,  // Host
-                              443,            // Port
+                              2137,           // Port
                               upload_url,     // Path
                               fb->buf,        // JPEG data
                               fb->len,        // Length
@@ -333,8 +334,7 @@ ModemResult modemSetupNetwork(const char* apn, const char* user,
   res = modemSendATF("OK", AT_TIMEOUT_SHORT, "AT+CSTT=\"%s\",\"%s\",\"%s\"",
                      apn, user ? user : "", pass ? pass : "");
   if (res != MODEM_OK) {
-    Serial.println("[MODEM] Failed to configure APN");
-    return res;
+    Serial.println("[MODEM] Failed to configure APN, continuing...");
   }
   delay(100);
 
@@ -367,6 +367,14 @@ ModemResult modemConfigureSSL() {
 
   modemSendATF("OK", AT_TIMEOUT_MEDIUM, "AT+CACLOSE=%d", SSL_SESSION_ID);
 
+  res = modemSendAT("AT+CACFG=\"transwaittm\",1", "OK", AT_TIMEOUT_SHORT);
+  if (res != MODEM_OK) return res;
+  delay(50);
+
+  res = modemSendAT("AT+CACFG=\"transpktsize\",1024", "OK", AT_TIMEOUT_SHORT);
+  if (res != MODEM_OK) return res;
+  delay(50);
+
   res = modemSendATF("OK", AT_TIMEOUT_SHORT, "AT+CACID=%d", SSL_SESSION_ID);
   if (res != MODEM_OK) return res;
   delay(50);
@@ -381,8 +389,8 @@ ModemResult modemConfigureSSL() {
 
   // Set SSL context to use for CAOPEN
   // AT+CASSLCFG=<cid>,"SSL",<ssl_ctx_index>
-  res = modemSendATF("OK", AT_TIMEOUT_SHORT, "AT+CASSLCFG=%d,\"ssl\",%d",
-                     SSL_SESSION_ID, SSL_SESSION_ID);
+  res = modemSendATF("OK", AT_TIMEOUT_SHORT, "AT+CASSLCFG=%d,\"ssl\",1",
+                     SSL_SESSION_ID);
   if (res != MODEM_OK) return res;
   delay(50);
 
@@ -426,86 +434,134 @@ ModemResult modemSSLOpen(const char* host, uint16_t port) {
   return MODEM_OK;
 }
 
-ModemResult modemSSLEnterTransparent() {
-  // AT+CASWITCH=<cid>,<mode>
-  // mode: 1 = enter transparent mode
-  // Returns ">" when ready for data
+// Send data using command mode instead of transparent mode
+// AT+CASEND=<cid>,<length>
+// Then send exactly <length> bytes
+// Modem responds with OK when done
 
-  ModemResult res = modemSendATF("CONNECT", AT_TIMEOUT_MEDIUM,
-                                 "AT+CASWITCH=%d,1", SSL_SESSION_ID);
-  if (res == MODEM_OK) {
-    modem.inTransparentMode = true;
-    delay(50);  // Small delay before sending data
-  }
-  return res;
-}
+ModemResult modemSSLSendData(const uint8_t* data, size_t len) {
+  ModemResult res;
+  const size_t MAX_CHUNK = 250;  // safe chunk size
+  size_t sent = 0;
 
-ModemResult modemSSLExitTransparent() {
-  if (!modem.inTransparentMode) {
-    return MODEM_OK;
-  }
+  while (sent < len) {
+    size_t chunkSize = min(MAX_CHUNK, len - sent);
 
-  // Method 1: Wait for connection close (auto-exit)
-  // Method 2: Send +++ escape sequence
-  // Method 3: Toggle DTR (if configured with AT&D1)
-
-  uint32_t start = millis();
-
-  // Try +++ escape sequence
-  // Must have > 1s silence before and after +++
-  Serial.println("[MODEM] Exiting transparent mode...");
-
-// If DTR is available, try DTR toggle
-#if MODEM_DTR_PIN >= 0
-  Serial.println("[MODEM] Trying DTR toggle to exit transparent mode...");
-  modemDTRHigh();  // DTR inactive
-  delay(100);
-  modemDTRLow();  // DTR active again
-  delay(500);
-
-  // Check again
-  modemDrain();
-  if (modemSendAT("AT", "OK", AT_TIMEOUT_SHORT) == MODEM_OK) {
-    modem.inTransparentMode = false;
-    return MODEM_OK;
-  }
-#else
-  delay(1100);  // Guard time before +++
-  MODEM_SERIAL.print("+++");
-  MODEM_SERIAL.flush();
-  delay(1100);  // Guard time after +++
-
-  // Check if we got back to command mode
-  modem.responseLen = 0;
-  memset(modem.responseBuffer, 0, RESPONSE_BUFFER_SIZE);
-
-  uint32_t waitStart = millis();
-  while (millis() - waitStart < 2000) {
-    while (MODEM_SERIAL.available() &&
-           modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
-      modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();
+    // Tell modem we're sending N bytes
+    res = modemSendATF(">", AT_TIMEOUT_MEDIUM, "AT+CASEND=%d,%d",
+                       SSL_SESSION_ID, chunkSize);
+    if (res != MODEM_OK) {
+      Serial.printf("[MODEM] CASEND prompt failed: %d\n", res);
+      return res;
     }
-    if (strstr(modem.responseBuffer, "OK") ||
-        strstr(modem.responseBuffer, "CLOSED")) {
-      modem.inTransparentMode = false;
-      return MODEM_OK;
-    }
-    delay(10);
-  }
-#endif
 
-  modem.inTransparentMode =
-      false;  // Assume we're out even if we didn't confirm
+    // Now send exactly chunkSize bytes - modem is counting
+    size_t written = 0;
+    while (written < chunkSize) {
+      size_t toWrite = min((size_t)256, chunkSize - written);
+      MODEM_SERIAL.write(data + sent + written, toWrite);
+      written += toWrite;
+      // Small yield OK here - modem is buffering until it gets chunkSize bytes
+      delay(1);
+    }
+    MODEM_SERIAL.flush();
+
+    // Wait for OK confirming data was sent
+    // Read response (might get +CASEND:  0,<len> and OK)
+    uint32_t start = millis();
+    bool gotOK = false;
+    modem.responseLen = 0;
+
+    while (millis() - start < AT_TIMEOUT_MEDIUM) {
+      while (MODEM_SERIAL.available() &&
+             modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
+        modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();
+        modem.responseBuffer[modem.responseLen] = '\0';
+      }
+
+      if (strstr(modem.responseBuffer, "OK")) {
+        gotOK = true;
+        break;
+      }
+      if (strstr(modem.responseBuffer, "ERROR")) {
+        Serial.printf("[MODEM] CASEND error: %s\n", modem.responseBuffer);
+        return MODEM_ERROR;
+      }
+      delay(10);
+    }
+
+    if (!gotOK) {
+      Serial.println("[MODEM] CASEND timeout waiting for OK");
+      return MODEM_TIMEOUT;
+    }
+
+    sent += chunkSize;
+    Serial.printf("[MODEM] Sent %u/%u bytes\n", sent, len);
+  }
+
   return MODEM_OK;
 }
 
-ModemResult modemSSLClose() {
-  // Exit transparent mode first if needed
-  if (modem.inTransparentMode) {
-    modemSSLExitTransparent();
-    delay(100);
+// Receive data using AT+CARECV
+ModemResult modemSSLReceiveData(uint32_t timeout) {
+  modem.responseLen = 0;
+  memset(modem.responseBuffer, 0, RESPONSE_BUFFER_SIZE);
+
+  uint32_t start = millis();
+
+  while (millis() - start < timeout) {
+    // Check if data is available
+    // +CADATAIND: <cid>,<length> is URC indicating data available
+
+    // Try to receive up to buffer size
+    ModemResult res = modemSendATF(
+        "+CARECV:", AT_TIMEOUT_MEDIUM, "AT+CARECV=%d,%d", SSL_SESSION_ID,
+        RESPONSE_BUFFER_SIZE - modem.responseLen - 1);
+
+    if (res == MODEM_OK) {
+      // Parse +CARECV: <cid>,<len>,<data>
+      char* p = strstr(modem.responseBuffer, "+CARECV:");
+      if (p) {
+        int cid, len;
+        if (sscanf(p, "+CARECV:  %d,%d,", &cid, &len) == 2) {
+          // Find start of data (after second comma)
+          char* dataStart = strchr(p + 8, ',');
+          if (dataStart) {
+            dataStart = strchr(dataStart + 1, ',');
+            if (dataStart) {
+              dataStart++;  // Skip comma
+              // Copy data to response buffer
+              size_t toCopy = min((size_t)len,
+                                  RESPONSE_BUFFER_SIZE - modem.responseLen - 1);
+              memcpy(modem.responseBuffer + modem.responseLen, dataStart,
+                     toCopy);
+              modem.responseLen += toCopy;
+            }
+          }
+
+          if (len > 0) {
+            start = millis();  // Reset timeout on data received
+            continue;
+          }
+        }
+      }
+    }
+
+    // Check if connection closed
+    res = modemSendATF("+CASTATE:", AT_TIMEOUT_SHORT, "AT+CASTATE?");
+    if (strstr(modem.responseBuffer, "+CASTATE: 0") ||
+        strstr(modem.responseBuffer, "+CASTATE: 3")) {
+      // 0 = closed, 3 = closing
+      break;
+    }
+
+    delay(100);  // Poll interval
   }
 
+  return modem.responseLen > 0 ? MODEM_OK : MODEM_TIMEOUT;
+}
+
+ModemResult modemSSLClose() {
   // AT+CACLOSE=<cid>
   ModemResult res =
       modemSendATF("OK", AT_TIMEOUT_MEDIUM, "AT+CACLOSE=%d", SSL_SESSION_ID);
@@ -513,85 +569,6 @@ ModemResult modemSSLClose() {
   delay(100);
 
   return res;
-}
-
-// ============================================================================
-// Data Transfer (in transparent mode)
-// ============================================================================
-
-ModemResult modemSendRaw(const uint8_t* data, size_t len) {
-  // Send in chunks to avoid overwhelming the serial buffer
-  const size_t CHUNK_SIZE = 512;
-  size_t sent = 0;
-
-  while (sent < len) {
-    size_t toSend = min(CHUNK_SIZE, len - sent);
-    size_t written = MODEM_SERIAL.write(data + sent, toSend);
-    MODEM_SERIAL.flush();  // Wait for TX complete
-    sent += written;
-
-    if (written < toSend) {
-      delay(10);  // Buffer was full, wait a bit
-    } else {
-      delay(1);  // Minimal yield
-    }
-  }
-
-  return MODEM_OK;
-}
-
-ModemResult modemSendString(const char* str) {
-  return modemSendRaw((const uint8_t*)str, strlen(str));
-}
-
-// Receive data until connection closes or timeout
-ModemResult modemReceiveUntilClosed(uint32_t timeout) {
-  modem.responseLen = 0;
-  memset(modem.responseBuffer, 0, RESPONSE_BUFFER_SIZE);
-
-  uint32_t start = millis();
-  uint32_t lastReceive = start;
-  const uint32_t IDLE_TIMEOUT =
-      2000;  // 2s of no data after receiving something
-  bool receivedAny = false;
-
-  Serial.println("[MODEM] Receiving response...");
-
-  while (millis() - start < timeout) {
-    while (MODEM_SERIAL.available() &&
-           modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
-      char c = MODEM_SERIAL.read();
-      modem.responseBuffer[modem.responseLen++] = c;
-      lastReceive = millis();
-      receivedAny = true;
-    }
-    modem.responseBuffer[modem.responseLen] = '\0';
-
-    // Check for connection closed indicators
-    // In transparent mode, we might see "CLOSED" or "+CASTATE:  0" when
-    // connection ends
-    if (strstr(modem.responseBuffer, "CLOSED") ||
-        strstr(modem.responseBuffer, "+CASTATE: 0,0") ||
-        strstr(modem.responseBuffer, "NO CARRIER") ||
-        strstr(modem.responseBuffer, "OK") ||
-        strstr(modem.responseBuffer, "ERROR")) {
-      modem.inTransparentMode = false;
-      Serial.printf("[MODEM] Connection closed, received %d bytes\n",
-                    modem.responseLen);
-      return MODEM_CLOSED;
-    }
-
-    // If we received data and then had a gap, response might be complete
-    if (receivedAny && (millis() - lastReceive > IDLE_TIMEOUT)) {
-      Serial.printf("[MODEM] Idle timeout, received %d bytes\n",
-                    modem.responseLen);
-      break;
-    }
-
-    delay(10);  // Yield
-  }
-
-  return modem.responseLen > 0 ? MODEM_OK : MODEM_TIMEOUT;
 }
 
 // ============================================================================
@@ -604,7 +581,6 @@ ModemResult modemHttpPostJpeg(const char* host, uint16_t port, const char* path,
   ModemResult res;
 
   // Build HTTP request headers
-  char headers[512];
   int headerLen;
 
   if (extraHeaders && strlen(extraHeaders) > 0) {
@@ -642,45 +618,28 @@ ModemResult modemHttpPostJpeg(const char* host, uint16_t port, const char* path,
   }
   delay(50);
 
-  // Enter transparent mode
-  res = modemSSLEnterTransparent();
-  if (res != MODEM_OK) {
-    Serial.printf("[MODEM] Failed to enter transparent mode: %d\n", res);
-    modemSSLClose();
-    return res;
-  }
-
   // Send HTTP headers
   Serial.printf("[MODEM] Sending %d bytes of headers.. .\n", headerLen);
-  res = modemSendString(headers);
+  res = modemSSLSendData((const uint8_t*)headers, headerLen);
   if (res != MODEM_OK) {
     Serial.printf("[MODEM] Failed to send headers: %d\n", res);
-    modemSSLExitTransparent();
     modemSSLClose();
     return res;
   }
 
   // Send JPEG data
   Serial.printf("[MODEM] Sending %d bytes of JPEG data...\n", jpegLen);
-  res = modemSendRaw(jpegData, jpegLen);
+  res = modemSSLSendData(jpegData, jpegLen);
   if (res != MODEM_OK) {
     Serial.printf("[MODEM] Failed to send JPEG data: %d\n", res);
-    modemSSLExitTransparent();
     modemSSLClose();
     return res;
   }
 
   // Server should process and respond, then close connection (Connection:
-  // close) Wait for response - transparent mode should auto-exit when
-  // connection closes. Spoiler: it doesn't
-  // modemSSLExitTransparent();
-  res = modemReceiveUntilClosed(TRANSPARENT_EXIT_TIMEOUT);
+  // close) Wait for response
+  res = modemSSLReceiveData(MODEM_CONN_TMOUT);
 
-  // If we're still in transparent mode (timeout), force exit
-  if (modem.inTransparentMode) {
-    Serial.println("[MODEM] Force exiting transparent mode.. .");
-    modemSSLExitTransparent();
-  }
   delay(100);
 
   Serial.println("--- Response ---");

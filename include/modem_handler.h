@@ -38,7 +38,7 @@ void vModemHandler(void* params);
 #define AT_TIMEOUT_MEDIUM 5000  // 5s for network ops
 #define AT_TIMEOUT_LONG 30000   // 30s for SSL/connection
 #define AT_TIMEOUT_XLONG 60000  // 60s for slow operations
-#define TRANSPARENT_EXIT_TIMEOUT 15000
+#define MODEM_CONN_TMOUT 15000
 
 // Buffer sizes
 #define RESPONSE_BUFFER_SIZE 2048  // Store up to 2KB response
@@ -66,7 +66,6 @@ struct ModemState {
   size_t responseLen;
   bool initialized;
   bool connected;
-  bool inTransparentMode;
 };
 
 extern ModemState modem;
@@ -93,16 +92,10 @@ ModemResult modemConfigureDTR();
 // SSL Connection functions (using CA* commands)
 // ============================================================================
 ModemResult modemSSLOpen(const char* host, uint16_t port);
-ModemResult modemSSLEnterTransparent();
-ModemResult modemSSLExitTransparent();
 ModemResult modemSSLClose();
 
-// ============================================================================
-// Data transfer (in transparent mode)
-// ============================================================================
-ModemResult modemSendRaw(const uint8_t* data, size_t len);
-ModemResult modemSendString(const char* str);
-ModemResult modemReceiveUntilClosed(uint32_t timeout);
+ModemResult modemSSLReceiveData(uint32_t timeout);
+ModemResult modemSSLSendData(const uint8_t* data, size_t len);
 
 // ============================================================================
 // High-level:  Send HTTP POST with JPEG and get response
