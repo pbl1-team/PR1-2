@@ -101,6 +101,18 @@ void setup() {
       //
   );
 
+  xPumpHandler = xTaskCreateStaticPinnedToCore(
+      //
+      vPumpHandler, "PUMP", PUMP_STACK_SIZE,
+      //
+      (void*)0x00, tskIDLE_PRIORITY,
+      //
+      xPumpHandlerStack, &xPumpHandlerBuf,
+      // CPU0
+      0
+      //
+  );
+
   xModemHandler = xTaskCreateStaticPinnedToCore(
       //
       vModemHandler, "MODEM", MODEM_STACK_SIZE, (void*)0x00,
@@ -135,10 +147,6 @@ void setup() {
 void loop() {
   // Get loop start time
   it_st_time = millis();
-
-  Serial.printf("Thresh: %lld\nVal: %lld\n", asensor_avg, asensor2_avg);
-  Serial.printf("Mot: %hd\nPres: %hd\n\n", userFlags.ir_motion_detected,
-                userFlags.ir_presense_detected);
 
   if (userFlags.take_pic) {
     // Read camera frame

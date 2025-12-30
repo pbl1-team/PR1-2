@@ -59,7 +59,9 @@ vModemHandler_start:
     MODEM_RESTART("Failed to connect to internet");
   }
   modemFlags.modem_connected = 1;
+  termFlags.term_stalled = 1;
   Serial.println("Modem connected");
+  termFlags.term_stalled = 0;
 
   uint16_t cnt = 0;
   while (true) {
