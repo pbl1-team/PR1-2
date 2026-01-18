@@ -221,7 +221,7 @@ ModemResult modemSendAT(const char* cmd, const char* expectedResp,
 
     // If we found expected response, wait a bit for trailing data
     if (foundExpected) {
-      delay(30);
+      delay(10);
       while (MODEM_SERIAL.available() &&
              modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
         modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();

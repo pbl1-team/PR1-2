@@ -8,6 +8,7 @@
 
 #define FPS 5
 #define FPS_DLY 1000 / FPS
+const bool STARTUP_DEBUG_DELAY = true;
 static unsigned long it_st_time, it_time;
 
 typedef struct userFlags {
@@ -72,7 +73,14 @@ void setup() {
   // Initialise terminal
   Serial.begin(CONFIG_MONITOR_BAUD);
   termFlags.term_stalled = 1;
+
   pinMode(LED_BUILTIN, OUTPUT);
+
+  if (STARTUP_DEBUG_DELAY) {
+    Serial.println("Waiting to allow log capture...");
+    delay(6000);
+    Serial.println("Done waiting. Commencing init...");
+  }
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
@@ -93,7 +101,7 @@ void setup() {
       //
       vTerminalHandler, "TERM", TERM_STACK_SIZE,
       //
-      (void*)0x00, (tskIDLE_PRIORITY + 1),
+      (void*)0x00, tskIDLE_PRIORITY,
       //
       xTerminalHandlerStack, &xTerminalHandlerBuf,
       // CPU0
@@ -117,7 +125,7 @@ void setup() {
       //
       vModemHandler, "MODEM", MODEM_STACK_SIZE, (void*)0x00,
       //
-      (tskIDLE_PRIORITY + 10),
+      (tskIDLE_PRIORITY + 5),
       //
       xModemHandlerStack, &xModemHandlerBuf,
       // CPU1
@@ -129,7 +137,7 @@ void setup() {
       //
       vIRHandler, "IRSNS", IR_STACK_SIZE, (void*)0x00,
       //
-      (tskIDLE_PRIORITY + 5),
+      (tskIDLE_PRIORITY + 1),
       //
       xIRHandlerStack, &xIRHandlerBuf,
       // CPU1
