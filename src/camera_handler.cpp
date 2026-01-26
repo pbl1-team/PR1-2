@@ -28,11 +28,11 @@ void initCamera(void) {
   camera_config.pin_pwdn = PWDN_GPIO_NUM;
   camera_config.pin_reset = RESET_GPIO_NUM;
   camera_config.xclk_freq_hz = 20000000;
-  camera_config.frame_size = FRAMESIZE_SVGA;
+  camera_config.frame_size = FRAMESIZE_HVGA;
   camera_config.pixel_format = PIXFORMAT_JPEG;
   camera_config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   camera_config.fb_location = CAMERA_FB_IN_PSRAM;
-  camera_config.jpeg_quality = 12;
+  camera_config.jpeg_quality = 13;
   camera_config.fb_count = 1;
 
   // camera init
