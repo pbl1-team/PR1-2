@@ -83,6 +83,10 @@ PumpHandler_begin:
   termFlags.term_stalled = 1;
   Serial.printf("[PUMP] Pump controller hello msg: \n%s\n", pump_sbuf);
   termFlags.term_stalled = 0;
+
+  Serial2.printf("SET SNS-LB 145\n");
+  PUMP_READLINE();
+  PUMP_READLINE();
   while (true) {
     delay(PUMP_SCAN_DLY);
     if (termFlags.pump_reset_req) {
@@ -92,6 +96,7 @@ PumpHandler_begin:
     Serial2.printf("STAT\n");
     for (int i = 0; i < 6; i++) {
       PUMP_READLINE();
+      // Serial.printf("[PUMP] %s\n", pump_sbuf);
       if (i != 2) {
         continue;
       }

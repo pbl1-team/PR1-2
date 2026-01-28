@@ -5,9 +5,9 @@
 #include "camera_handler.h"
 #include "terminal_handler.h"
 
-const char* upload_url = "/api/captured/image";
-static const char* upload_server = "trop-mock.p4tkry.pl";
-const char* X_DEVICE_ID = "X-Device-Id: 2137420";
+const char* upload_url = "/api/device/detection";
+static const char* upload_server = "trop.p4tkry.pl";
+const char* X_DEVICE_ID = "x-device-id: wat-2";
 static char headers[2048];
 
 volatile modem_flags_t modemFlags;
@@ -34,10 +34,15 @@ vModemHandler_start:
   modemFlags.modem_connected = 0;
   modemFlags.sending_in_progress = 0;
   modemFlags.c_retries = 0;
+
   digitalWrite(MODEM_PWR_PIN, LOW);
   delay(1500);
-
   digitalWrite(MODEM_PWR_PIN, HIGH);
+  delay(100);
+  digitalWrite(MODEM_PWR_PIN, LOW);
+  delay(1500);
+  digitalWrite(MODEM_PWR_PIN, HIGH);
+
   modemInit();
   delay(5000);
 
