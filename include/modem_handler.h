@@ -35,10 +35,9 @@ void vModemHandler(void* params);
 
 // Timeouts
 #define AT_TIMEOUT_SHORT 1000   // 1s for simple commands
-#define AT_TIMEOUT_MEDIUM 5000  // 5s for network ops
+#define AT_TIMEOUT_MEDIUM 8000  // 8s for network ops
 #define AT_TIMEOUT_LONG 30000   // 30s for SSL/connection
 #define AT_TIMEOUT_XLONG 60000  // 60s for slow operations
-#define MODEM_CONN_TMOUT 15000
 
 // Buffer sizes
 #define RESPONSE_BUFFER_SIZE 512

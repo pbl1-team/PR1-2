@@ -38,10 +38,6 @@ vModemHandler_start:
   digitalWrite(MODEM_PWR_PIN, LOW);
   delay(1500);
   digitalWrite(MODEM_PWR_PIN, HIGH);
-  delay(100);
-  digitalWrite(MODEM_PWR_PIN, LOW);
-  delay(1500);
-  digitalWrite(MODEM_PWR_PIN, HIGH);
 
   modemInit();
   delay(5000);
@@ -226,7 +222,7 @@ ModemResult modemSendAT(const char* cmd, const char* expectedResp,
 
     // If we found expected response, wait a bit for trailing data
     if (foundExpected) {
-      delay(10);
+      delay(30);
       while (MODEM_SERIAL.available() &&
              modem.responseLen < RESPONSE_BUFFER_SIZE - 1) {
         modem.responseBuffer[modem.responseLen++] = MODEM_SERIAL.read();
@@ -655,7 +651,7 @@ ModemResult modemHttpPostJpeg(const char* host, uint16_t port, const char* path,
 
   // Server should process and respond, then close connection (Connection:
   // close) Wait for response
-  res = modemSSLReceiveData(MODEM_CONN_TMOUT);
+  res = modemSSLReceiveData(AT_TIMEOUT_MEDIUM);
 
   Serial.println("--- Response ---");
   Serial.println(modem.responseBuffer);
